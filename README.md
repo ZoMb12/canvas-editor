@@ -21,7 +21,7 @@ After your AI agent follows this skill, your website will have:
 - **📏 Snap Alignment** — automatic pink guide lines when edges align (like PowerPoint)
 - **👁️ Preview Sync** — what you arrange in edit mode is exactly what visitors see
 - **✨ Scroll Animation** — each card slides in individually as users scroll
-- **💾 Auto-Save** — positions save automatically; no "forgot to save" moments
+- **💾 Manual Save — positions save only when you click save; full control
 
 ### How to use
 
@@ -98,7 +98,7 @@ AI 助手按照这个技能操作后，你的网站将拥有：
 - **📏 吸附对齐** — 贴近时自动出现粉色对齐线（像 PPT 一样）
 - **👁️ 预览同步** — 编辑模式排好的布局，预览模式一模一样
 - **✨ 滚动动画** — 每张卡片在用户滚动时独立滑入
-- **💾 自动保存** — 拖完即存，不会忘记保存
+- **💾 手动保存 — 点击保存按钮才写入；完全控制
 
 ### 怎么用
 
