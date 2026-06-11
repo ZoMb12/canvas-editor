@@ -210,10 +210,7 @@ won't trigger a position save, preserving the click for text editing.
     const rect = e.currentTarget.getBoundingClientRect()
     setTextDragging({ ox: e.clientX - rect.left, oy: e.clientY - rect.top, moved: false })
   }}
-  onPointerUp={() => {
-    if (textDragging?.moved) saveToStorage("text_pos", JSON.stringify(textPos))
-    setTextDragging(null)
-  }}
+  onPointerUp={() => setTextDragging(null)}
 >
   <EditableText ... />
 </div>

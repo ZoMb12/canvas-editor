@@ -89,8 +89,7 @@ pointermove on canvas
      → if moved: update pos
 
 pointerup on text element
-  → if moved: save to storage
-  → clear textDragging
+  → clear textDragging (no save — manual Save button only)
 ```
 
 ## Config Sync Pattern

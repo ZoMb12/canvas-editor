@@ -267,12 +267,10 @@ onPointerMove:
   if moved: update textPos to (mouseX - offsetX, mouseY - offsetY)
 
 onPointerUp:
-  if textDragging.moved: save textPos to storage
-  clear textDragging
+  clear textDragging  // no save here — user must click Save button explicitly
 ```
 
-**Save on drag end** (not just on explicit "save" button). This prevents data
-loss if the user drags and then navigates away without clicking save.
+**All saves happen through a single explicit "Save" button.**
 
 **Also include in the main Save button** so batch save covers everything.
 
@@ -414,10 +412,8 @@ the IntersectionObserver never fires and nothing appears.
 
 ### Save Trigger
 
-Two pathways:
-1. **Auto-save on drag/resize end** — each drag-end saves its piece (card
-   positions or text positions) to avoid data loss
-2. **Explicit Save button** — batch saves all positions at once
+**Manual only.** A single "Save" button batch-saves all positions.
+No auto-save on drag end — the user decides when changes are final.
 
 ### Save Implementation
 
@@ -458,7 +454,7 @@ When implementing this skill in a project, work through these phases in order:
 - [ ] **P5:** Draggable text elements (label, title; 3px dead zone)
 - [ ] **P6:** Coordinate system (maxRight, canvasBottom, unified formula)
 - [ ] **P7:** Preview mode (percentage absolute positioning, per-card animation)
-- [ ] **P8:** Save/Load (storage abstraction, auto-save + batch save)
+- [ ] **P8:** Save/Load (storage abstraction, manual save button only)
 - [ ] **P9:** Storage implementation (choose based on project: DB, API, localStorage)
 - [ ] **P10:** Polish (handle hover states, mobile gestures, loading states)
 
