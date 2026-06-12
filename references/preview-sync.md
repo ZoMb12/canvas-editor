@@ -1,68 +1,74 @@
 # Canvas Editor — Preview Sync Reference
 
+编辑模式与预览模式的坐标同步原理。
+
+---
+
 ## The Fundamental Problem
 
-Edit mode uses **absolute pixel positions** on a canvas with `width: 100%` (of
-its parent section). Preview mode must render the **exact same layout** but
-responsively — the viewport width during preview may differ from the viewport
-width during editing.
+- **编辑模式**使用绝对像素坐标 (`left: 512`, `top: 80`)
+- **预览模式**必须保持相同布局，但需要响应式缩放（视口宽度不同）
 
 ## Why Simple Approaches Fail
 
-### Approach 1: Pixel positions in preview
+### ❌ 像素坐标直接沿用
+```tsx
+style={{ position: "absolute", left: "512px", top: "80px" }}
 ```
-❌ style={{ position: "absolute", left: "512px", top: "80px" }}
-```
-Fails because the container width might not match the edit-time width → layout
-looks wrong on different screen sizes.
+容器宽度与编辑时不同 → 布局偏移。
 
-### Approach 2: CSS Grid approximation
+### ❌ CSS Grid 近似
+```tsx
+grid-column: span 2
 ```
-❌ Use grid-column-span based on card width/height ratio
-```
-Fails because grid placement ignores the saved X/Y positions — the user's
-careful spatial arrangement is lost.
+丢失了用户精细调整的 X/Y 位置。
 
-### Approach 3: Percentage-based with inconsistent coordinate systems
-```
-❌ Edit uses canvasBottom, Preview uses maxBottom for ratio calculation
-```
-Fails because a 10px difference in the denominator causes visible position
-shifts across all elements.
+### ❌ 编辑和预览使用不同坐标系
+编辑用 `canvasBottom`，预览用 `maxBottom` → 分母差 1px 就导致全部元素偏移。
+
+---
 
 ## The Correct Solution
 
-### Unified Coordinate Basis
+### Step 1: 统一坐标基准（ONCE）
 
-Use the **same formula** for both edit min-height and preview aspect ratio.
-Any difference — even 1px — cascades into visible misalignment.
+编辑模式和预览模式使用**完全相同的公式**。任何差异——哪怕 1px——都会级联到所有元素。
 
 ```ts
-// Step 1: Compute bounds ONCE, use everywhere
 const previewBounds = useMemo(() => {
   const maxRight = Math.max(
     ...cards.map(p => p.left + p.w),
-    labelPos.left + 300,    // estimated label width
-    titlePos.left + 200,    // estimated title width
-    100
+    labelPos.left + 300,    // label 宽度估算
+    titlePos.left + 200,    // title 宽度估算
+    100                     // 最小 fallback
   )
   const maxBottom = Math.max(
     ...cards.map(p => p.top + p.h),
-    titlePos.top + 60,      // estimated title height
-    labelPos.top + 30,      // estimated label height
-    100
+    titlePos.top + 60,      // title 高度估算
+    labelPos.top + 30,      // label 高度估算
+    100                     // 最小 fallback
   )
   return { maxRight, maxBottom }
 }, [cards, labelPos, titlePos])
 
-// Step 2: Derive canvas height from bounds (with floor)
-const canvasBottom = Math.max(previewBounds.maxBottom, 700)
+const canvasBottom = Math.max(previewBounds.maxBottom, 700)  // 700px 下限
 ```
 
-The floor (700) prevents the edit canvas from being too small to work with.
-The preview respects this floor through `canvasBottom`.
+`canvasBottom` 的 700px floor 保证画布不会因内容太少而缩得太小。
 
-### Preview Container
+### Step 2: 预览容器——同宽高比
+
+```
+┌──────────────────────────────────────────┐
+│  Wrapper: max-width = maxRight           │  ← 宽屏时精确匹配 maxRight px
+│  ┌────────────────────────────────────┐  │
+│  │  Aspect box: padding-top 按比例    │  │  ← 高度 = 宽度 × (canvasBottom/maxRight)
+│  │  ┌──────────────────────────────┐ │  │
+│  │  │  Content: position absolute   │ │  │  ← 所有元素用百分比定位
+│  │  └──────────────────────────────┘ │  │
+│  └────────────────────────────────────┘  │
+└──────────────────────────────────────────┘
+```
 
 ```html
 <!-- Wrapper: caps width to maxRight → pixel-perfect on wide screens -->
@@ -77,9 +83,13 @@ The preview respects this floor through `canvasBottom`.
 </div>
 ```
 
-### Element Positioning
+**为什么 `max-width: maxRight`？** 当屏幕宽度 ≥ maxRight 时，容器宽度恰好 = maxRight → 百分比数值直接还原为像素值。窄屏时等比例缩小。
 
-All elements use the same denominator pair:
+**为什么 `padding-top`？** CSS `padding-top: X%` 是相对于容器宽度的。容器宽度为 maxRight 时，padding-top = (canvasBottom / maxRight) × maxRight = canvasBottom → 精确还原画布高度。
+
+### Step 3: 元素百分比定位
+
+所有元素使用同一对分母：
 
 ```
 Horizontal: percentage = (pixel_value / maxRight) × 100
@@ -98,60 +108,94 @@ style={{
 
 // Label
 style={{
-  position: "absolute",
   left: `${(labelPos.left / maxRight) * 100}%`,
   top:  `${(labelPos.top / canvasBottom) * 100}%`,
 }}
 
 // Title
 style={{
-  position: "absolute",
   left: `${(titlePos.left / maxRight) * 100}%`,
   top:  `${(titlePos.top / canvasBottom) * 100}%`,
 }}
 ```
 
-### Why This Works
+---
 
-At a viewport where the container width W equals `maxRight`:
-- Container height = W × (canvasBottom / maxRight) = maxRight × (canvasBottom / maxRight) = canvasBottom
-- Card left = W × (pos.left / maxRight) = maxRight × (pos.left / maxRight) = pos.left ✓
-- Card top = canvasBottom × (pos.top / canvasBottom) = pos.top ✓
+## Why This Works — 数学证明
 
-**The layout is pixel-perfect at W = maxRight, and scales proportionally at
-other widths.**
+当视口宽度 W 恰好等于 `maxRight` 时：
 
-## Common Pitfall
+```
+容器高度 = W × (canvasBottom / maxRight)
+         = maxRight × (canvasBottom / maxRight)
+         = canvasBottom ✓
 
-### Using maxBottom instead of canvasBottom for the ratio
+卡片 left = W × (pos.left / maxRight)
+           = maxRight × (pos.left / maxRight)
+           = pos.left ✓
 
-```tsx
-// ❌ WRONG: preview ratio uses raw maxBottom
-style={{ paddingTop: `${(maxBottom / maxRight) * 100}%` }}
-
-// ✅ CORRECT: use canvasBottom (includes 700px floor)
-style={{ paddingTop: `${(canvasBottom / maxRight) * 100}%` }}
+卡片 top = canvasBottom × (pos.top / canvasBottom)
+          = pos.top ✓
 ```
 
-When maxBottom < 700 (small layout), the preview would be shorter than the
-edit canvas → all vertical positions shift → layout doesn't match.
+**当 W = maxRight 时，像素级精确匹配。** 在其它宽度下等比例缩放。
 
-### Using different formulas for edit vs preview
+---
+
+## Common Pitfalls
+
+### 1. 预览宽高比用了 maxBottom 而非 canvasBottom
 
 ```tsx
-// ❌ WRONG: two different calculations
-canvasBottom = max(titlePos.top + 60, labelPos.top + 30, ...cardBottoms, 700)
-previewRatio = max(titlePos.top + 50, labelPos.top + 20, ...cardBottoms, 100) / maxRight
+// ❌ 错误
+padding-top: ${(maxBottom / maxRight) * 100}%
 
-// ✅ CORRECT: single source of truth
-bounds = computeBounds(cards, label, title)  // once
+// ✅ 正确
+padding-top: ${(canvasBottom / maxRight) * 100}%
+```
+
+当 `maxBottom < 700`（内容较少）时，预览容器比编辑画布矮 → 所有垂直位置偏下。
+
+### 2. 编辑和预览使用不同公式
+
+```tsx
+// ❌ 错误：两套不同计算
+editMinHeight   = max(titleTop + 60, labelTop + 30, ..., 700)
+previewRatio    = max(titleTop + 50, labelTop + 20, ..., 100) / maxRight
+
+// ✅ 正确：单一数据源
+bounds = computeBounds(cards, label, title)   // 一次计算
 canvasBottom = max(bounds.maxBottom, 700)
 previewRatio = canvasBottom / bounds.maxRight
 ```
 
-## Scroll Animation Setup
+### 3. 垂直分母未统一
 
-Each card should animate independently on scroll:
+```tsx
+// ❌ 错误：标题用 maxBottom 但卡片用 canvasBottom
+title.top = titlePos.top / maxBottom * 100
+card.top  = pos.top / canvasBottom * 100
+
+// → 标题和卡片位置不同步
+
+// ✅ 正确：全部用 canvasBottom
+title.top = titlePos.top / canvasBottom * 100
+card.top  = pos.top / canvasBottom * 100
+```
+
+### 4. 编辑和预览的缺省位置不一致
+
+如果编辑模式初始化位置用了自己写的公式，预览模式用了另一套 → 用户打开页面看到的就是两样。**defaultPositions 必须共享给两个模式**。
+
+---
+
+## Scroll Animation — 逐卡独立入场
+
+预览模式中每张卡片独立使用 IntersectionObserver 触发入场动画。
+
+**为什么不能包一个大的 RevealOnScroll？** 因为卡片的容器（百分比绝对定位）本身 height = 0 → IntersectionObserver 永远看不到 → 动画不触发。
+
+**解决方案：** 每张卡片一个独立 observer，且卡片 div 有明确尺寸（从百分比计算得出）。
 
 ```tsx
 function PreviewCard({ pos, maxRight, canvasBottom, children }) {
@@ -191,7 +235,7 @@ function PreviewCard({ pos, maxRight, canvasBottom, children }) {
 }
 ```
 
-CSS:
+CSS：
 ```css
 .reveal {
   opacity: 0;
@@ -204,9 +248,3 @@ CSS:
   transform: translateY(0);
 }
 ```
-
-**Important:** Do NOT wrap the entire preview in a single RevealOnScroll
-wrapper. If individual cards use absolute positioning, their wrapper divs
-collapse to 0 height, and the IntersectionObserver never triggers → nothing
-appears. Each card needs its own observer with a wrapper that has explicit
-dimensions (from percentage calculations).

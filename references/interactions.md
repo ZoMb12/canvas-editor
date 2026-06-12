@@ -1,14 +1,25 @@
 # Canvas Editor — Interaction Algorithms
 
+通用交互算法，Agent 需根据项目技术栈适配。
+
+---
+
 ## Card Drag
+
+### Core Interaction
+
+1. `onPointerDown` on card → record offset (`mouseX - cardLeft`, `mouseY - cardTop`)
+2. Canvas-level `onPointerMove` → update position to `(mouseX - offsetX, mouseY - offsetY)`
+3. Canvas-level `onPointerUp` → clear dragging state
+
+### Algorithm
 
 ```
 onPointerDown(cardElement, event):
   if event.target.dataset.handle: return           // resize handle, skip
-  if labelDragging or titleDragging: return        // text is being dragged
+  if labelDragging or titleDragging: return        // text is being dragged, skip
   event.preventDefault()                           // prevent text selection
   cardRect = cardElement.getBoundingClientRect()
-  canvasRect = canvasElement.getBoundingClientRect()
   ox = event.clientX - cardRect.left               // offset within card
   oy = event.clientY - cardRect.top
   setDragging({ idx: cardIndex, ox, oy })
@@ -18,6 +29,9 @@ onPointerMove(canvasElement, event):
   mx = event.clientX - canvasRect.left
   my = event.clientY - canvasRect.top
 
+  if textDragging: applyTextDrag(...)
+  if labelDragging: applyTextDrag(...)
+
   if dragging:
     rawX = mx - dragging.ox
     rawY = my - dragging.oy
@@ -25,24 +39,26 @@ onPointerMove(canvasElement, event):
     setGuides(guides)
     updatePositions(dragging.idx, { left: rx, top: ry })
 
+  if resizing:
+    compute new w/h relative to resize anchor (sx, sy)
+    updatePositions(resizing.idx, { left, top, w, h })
+
 onPointerUp():
-  setDragging(null)
-  setGuides(null)
+  clear dragging, resizing, guides, textDragging, labelDragging
 ```
+
+> **ZoMble 实现位置:** `src/components/sections/EditorSelection.tsx` 中 `onPointerMove` / `onPointerUp` / `onPointerDown`
 
 ### Why canvas-level onPointerMove?
 
 **Wrong approach:** `onPointerMove` on each card.
-Problem: when the user drags fast, the pointer leaves the card element. The
-event stops firing → drag freezes. Only fires again when the pointer re-enters
-the card.
+❌ When the user drags fast, the pointer leaves the card → event stops firing → drag freezes.
 
 **Correct approach:** `onPointerMove` on the canvas container.
-The canvas covers all cards, so events fire continuously regardless of where
-the pointer is within the canvas.
+✅ The canvas covers all cards, so events fire continuously regardless of pointer position.
 
-Same for `onPointerUp` — put it on the canvas, not on cards. Otherwise
-releasing the mouse outside a card doesn't trigger cleanup.
+Same for `onPointerUp` — put it on the canvas, not on cards. Otherwise releasing
+the mouse outside a card doesn't trigger cleanup.
 
 ---
 
@@ -60,19 +76,19 @@ onPointerDown(handleElement, event):
   setResizing({
     idx: cardIndex,
     dir: "nw" | "ne" | "sw" | "se",
-    sx: cardRect.left - canvasRect.left,    // anchor X
-    sy: cardRect.top - canvasRect.top,      // anchor Y
+    sx: cardRect.left - canvasRect.left,    // anchor X (relative to canvas)
+    sy: cardRect.top - canvasRect.top,      // anchor Y (relative to canvas)
     sw: cardRect.width,                     // start width
     sh: cardRect.height,                    // start height
   })
 ```
 
-### Resize Move
+> **ZoMble 实现位置:** `src/components/home/CanvasCard.tsx` resize handles' `onPointerDown`
 
-The key insight: **always compute from the anchor point (sx, sy), never from
-the current positions state.** Reading `positions[idx].left` in the move
-handler gives the value from the PREVIOUS frame (already modified), causing
-cumulative drift.
+### Resize Move — 关键陷阱：锚点漂移
+
+**始终从锚点 (sx, sy) 计算，不要从当前 positions state 读取。**
+读取 `positions[idx].left` 会拿到上一次被修改过的值，导致累积漂移。
 
 ```
 onPointerMove:
@@ -82,18 +98,52 @@ onPointerMove:
     x = r.sx, y = r.sy          // ← START from anchor, not positions[idx]
 
     if r.dir includes "e":  w = max(100, mouseX - x)     // right edge moves
-    if r.dir includes "w":  w = max(100, x + r.sw - mouseX); x = mouseX  // left edge moves
-    if r.dir includes "s":  h = max(100, mouseY - y)     // bottom edge moves
-    if r.dir includes "n":  h = max(100, y + r.sh - mouseY); y = mouseY  // top edge moves
-
-    // OPTIONAL: lock aspect ratio
-    // if (r.dir is horizontal) h = round(w * r.startH / r.startW)
-    // if (r.dir is vertical)   w = round(h * r.startW / r.startH)
+    if r.dir includes "w":  w = max(100, x + r.sw - mouseX); x = mouseX
+    if r.dir includes "s":  h = max(100, mouseY - y)
+    if r.dir includes "n":  h = max(100, y + r.sh - mouseY); y = mouseY
 
     updatePositions(r.idx, { left: x, top: y, w, h })
 ```
 
-The `100` minimum prevents cards from becoming invisibly small.
+Minimum `100px` prevents cards from becoming invisibly small.
+
+> **ZoMble 实现位置:** `src/components/sections/EditorSelection.tsx` 中 resizing 分支
+
+### 双层 DOM 结构（防圆角裁剪）
+
+卡片有 `rounded-2xl overflow-hidden` 时，角落的 resize handle 会被裁掉 → 不可点击。
+解决方案：外层 div 不 clip，内层 div 负责 clip 图片和 overlay。
+
+```
+┌─ Outer div (overflow: visible) ← handles 放这里，不被裁剪
+│  ├─ Inner div (rounded-2xl overflow-hidden) ← clip 图片/overlay
+│  │   pointer-events: none (让事件透传给外层)
+│  ├─ Handle NW ─┐
+│  ├─ Handle NE  │ ← 在裁剪区之外
+│  └─ …          │
+└────────────────┘
+```
+
+```tsx
+// Outer
+<div style={{ position: "absolute", left, top, width, height }}
+     onPointerDown={dragHandler}>
+  {/* Inner: clips content only */}
+  <div className="rounded-2xl overflow-hidden pointer-events-none"
+       style={{ position: "absolute", inset: 0 }}>
+    <img ... />
+    <div className="overlay">...</div>
+  </div>
+  {/* Handles: z-30, outside clipping zone */}
+  {corners.map(corner => (
+    <div data-handle={corner}
+         style={{ position: "absolute", [corner]: "-4px", zIndex: 30 }}
+         onPointerDown={resizeStart} />
+  ))}
+</div>
+```
+
+> **ZoMble 实现位置:** `src/components/home/CanvasCard.tsx`
 
 ---
 
@@ -101,9 +151,9 @@ The `100` minimum prevents cards from becoming invisibly small.
 
 ### Reference Lines
 
-Each card has 6 reference lines:
-- Horizontal: left edge, centerX, right edge
-- Vertical: top edge, centerY, bottom edge
+每张卡片 6 条参考线:
+- 水平: left edge, centerX, right edge
+- 垂直: top edge, centerY, bottom edge
 
 ### Algorithm
 
@@ -149,11 +199,14 @@ function calcSnap(rx, ry, cardW, cardH, selfIdx, allCards):
     else if |myLines.bottom - oLines.top| < SNAP:
       ry = oLines.top - cardH; guides.y = oLines.top
 
-  hasGuides = (guides.x != null || guides.y != null)
-  return { rx, ry, guides: hasGuides ? guides : null }
+  return { rx, ry, guides: (guides.x != null || guides.y != null) ? guides : {} }
 ```
 
+> **ZoMble 实现位置:** `src/lib/curatedCanvas.ts` → `calcSnap()`
+
 ### Guide Rendering
+
+粉色发光对齐线：
 
 ```tsx
 {guides?.x != null && (
@@ -180,7 +233,7 @@ function calcSnap(rx, ry, cardW, cardH, selfIdx, allCards):
 
 ## Text Drag (Label/Title)
 
-### Shared helper function
+### Shared Helper
 
 ```ts
 function applyTextDrag(drag, pos, setDrag, setPos, mouseX, mouseY):
@@ -197,35 +250,34 @@ function applyTextDrag(drag, pos, setDrag, setPos, mouseX, mouseY):
     setPos({ left: mouseX - drag.ox, top: mouseY - drag.oy })
 ```
 
-The 3px dead zone allows inline text editing: a short click (< 3px movement)
-won't trigger a position save, preserving the click for text editing.
+3px dead zone 允许内联文字编辑：短点击（<3px）不会触发拖拽，保留点击事件用于文字编辑。
 
-### Element setup
+> **ZoMble 实现位置:** `src/lib/curatedCanvas.ts` → `applyTextDrag()`
+
+### Element Setup
 
 ```tsx
 <div
   style={{ position: "absolute", left: textPos.left, top: textPos.top, zIndex: 20 }}
   onPointerDown={(e) => {
     e.stopPropagation()  // prevent canvas/card drag
-    const rect = e.currentTarget.getBoundingClientRect()
-    setTextDragging({ ox: e.clientX - rect.left, oy: e.clientY - rect.top, moved: false })
+    setTextDragging({ ox, oy, moved: false })
   }}
   onPointerUp={() => setTextDragging(null)}
 >
-  <EditableText ... />
+  {/* 可编辑文字内容 */}
 </div>
 ```
 
-**Critical: Do NOT use `setPointerCapture`.** It prevents the canvas-level
-`pointermove` from firing, which breaks everything. Instead, rely on: (a)
-`stopPropagation` to prevent card drag, (b) card's `onPointerDown` checking
-`if (textDragging) return` to bail out.
+**Do NOT use `setPointerCapture`.** It prevents canvas-level `pointermove` from
+firing. Instead use: (a) `stopPropagation` to prevent card drag, (b) card's
+`onPointerDown` checking `if (textDragging) return`.
 
 ---
 
 ## Resize Handle Visibility
 
-Handles should be invisible by default, appear on hover:
+Handles 默认隐藏，hover 时显示：
 
 ```css
 .resize-handle {
@@ -239,8 +291,7 @@ Handles should be invisible by default, appear on hover:
 .card:hover .resize-handle { opacity: 1; }
 ```
 
-Position handles at corners with -4px offset so they extend slightly outside
-the card boundary (making them easier to grab):
+Handle 定位在四角，-4px 偏移伸出卡片边界，便于抓取：
 
 ```
 nw: top: -4px,  left: -4px,  cursor: nw-resize

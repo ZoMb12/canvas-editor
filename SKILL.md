@@ -9,6 +9,9 @@ description: >
   Also trigger when the user asks to convert a static grid/list into an
   editable canvas, or mentions "drag to rearrange" / "resize handles" /
   "alignment guides" / "画布编辑" / "自由拖拽布局".
+metadata:
+  type: reference
+  project: ZoMble Challenge
 ---
 
 # Canvas Editor — Universal Guide
@@ -61,9 +64,6 @@ All code examples are **pseudocode/React-flavored** — the agent must translate
 Edit drag/resize → positions state → Save → Storage
 Storage → Load → positions state → Preview rendering
 ```
-
-Refer to `references/architecture.md` for the detailed component tree and data
-flow diagram.
 
 ---
 
@@ -210,9 +210,6 @@ structure.
 Make handles visible on hover: `opacity-0 group-hover:opacity-100`
 Use semi-transparent white (`rgba(255,255,255,0.12)`) for subtle visibility.
 
-Refer to `references/interactions.md` for the complete drag and resize
-algorithm with edge cases.
-
 ---
 
 ## Phase 3: Edit Mode — Snap Alignment
@@ -227,7 +224,7 @@ Horizontal: centerX > left > right > left↔right (edge-to-edge)
 Vertical:   centerY > top > bottom > top↔bottom (edge-to-edge)
 ```
 
-**Algorithm** (refer to `references/interactions.md` for full pseudocode):
+**Algorithm:**
 ```ts
 function calcSnap(rx, ry, cardW, cardH, selfIdx, allCards):
   guides = {}
@@ -271,8 +268,6 @@ onPointerUp:
 ```
 
 **All saves happen through a single explicit "Save" button.**
-
-**Also include in the main Save button** so batch save covers everything.
 
 ---
 
@@ -339,8 +334,6 @@ Vertical:   top%   = (element.top  / canvasBottom) * 100
 denominators. `canvasBottom` includes the 700px floor, matching the edit mode
 canvas exactly. Using `maxBottom` directly introduces a mismatch when the
 layout is small.
-
-Refer to `references/preview-sync.md` for the derivation and edge cases.
 
 ---
 
@@ -424,7 +417,6 @@ async function saveAll() {
     saveToStorage("canvas_title_pos", JSON.stringify(titlePos)),
     saveToStorage("canvas_label_pos", JSON.stringify(labelPos)),
   ])
-  // Trigger any global refresh / cache invalidation
   dispatchCustomEvent("config-updated")
 }
 ```
@@ -456,12 +448,63 @@ When implementing this skill in a project, work through these phases in order:
 - [ ] **P7:** Preview mode (percentage absolute positioning, per-card animation)
 - [ ] **P8:** Save/Load (storage abstraction, manual save button only)
 - [ ] **P9:** Storage implementation (choose based on project: DB, API, localStorage)
-- [ ] **P10:** Polish (handle hover states, mobile gestures, loading states)
+- [ ] **P10:** Polish (hover states, mobile gestures, loading states)
 
 ---
 
-## Reference Files
+## ZoMble 项目文件映射
 
-- `references/architecture.md` — Component tree, state diagram, event flow
-- `references/interactions.md` — Complete drag/resize/snap algorithms with pseudocode
-- `references/preview-sync.md` — Coordinate system derivation and common pitfalls
+以下为 ZoMble Challenge 项目中画布编辑器各模块的实际文件位置，与上述通用模式一一对应。
+
+### 文件结构（拆分后）
+
+```
+src/
+  lib/
+    curatedCanvas.ts          ← 类型定义 + 核心算法（Phase 1-5）
+  hooks/
+    useRevealRef.ts           ← 独立 IntersectionObserver hook（Phase 6）
+  components/
+    home/
+      EditorCard.tsx          ← 精选卡片渲染（预览用）
+      PreviewCard.tsx         ← 逐卡独立入场动画（Phase 6）
+      CanvasCard.tsx          ← 编辑模式单卡：拖拽 + 四角缩放（Phase 2-3）
+    sections/
+      EditorSelection.tsx     ← 画布容器：编辑/预览双模式（Phase 2-7）
+  app/
+    page.tsx                  ← 首页，导入 EditorSelection 区块
+```
+
+### 模块映射表
+
+| Phase | 通用概念 | ZoMble 文件 | 关键函数/组件 |
+|-------|---------|-------------|-------------|
+| P1 | 数据类型 | `src/lib/curatedCanvas.ts` | `CardPos`、`TextPos`、`defaultPositions` |
+| P2 | 拖拽交互 | `src/components/sections/EditorSelection.tsx` | `onPointerMove` 画布级事件、`setDragging` |
+| P3 | 缩放 + 双层结构 | `src/components/home/CanvasCard.tsx` | `onResizeStart`、data-handle resize handles |
+| P4 | 对齐吸附 | `src/lib/curatedCanvas.ts` | `calcSnap()` 6 参考线 × 5px 阈值 |
+| P5 | 文字拖拽 | `src/lib/curatedCanvas.ts` + `EditorSelection.tsx` | `applyTextDrag()`、3px 死区 |
+| P6 | 坐标系统 | `src/components/sections/EditorSelection.tsx` | `previewBounds`、`canvasBottom` |
+| P7 | 预览模式动画 | `src/components/home/PreviewCard.tsx` | `useRevealRef(0.15)`、逐卡独立 observer |
+| P8 | 保存/加载 | `src/lib/curatedCanvas.ts` | `saveCuratedConfig()`、`config-updated` 事件 |
+| P9 | 存储实现 | Supabase `site_config` 表 | `fetch /api/admin/site-config/by-key` PUT/GET |
+
+### 关键数据格式
+
+**site_config 存储键：**
+```
+curated_product_ids  → [1, 2, 4, 6, 9]             （精选商品 ID 列表）
+curated_canvas       → [{ left, top, w, h }, ...]   （卡片位置数组）
+curated_title_pos    → { left, top }                 （标题位置）
+curated_label_pos    → { left, top }                 （标签位置）
+```
+
+### 事件流
+
+```
+拖拽/缩放 → positions state 更新
+  → 用户点击「保存画布」按钮
+    → saveCuratedConfig() PUT 到 Supabase
+      → dispatchEvent("config-updated")
+        → 全站同步刷新预览
+```
